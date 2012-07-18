@@ -12,14 +12,146 @@ import re
 import time
 import glob
 
-"""
-Initialize with new token
-"""
+class TokenCollection:
+	"""
+	Token collection object
+	"""
+	def __init__(self, tokens = []):
+		"""
+		Returns new TokenCollection object
+		"""
+		self.tokens = tokens
+		self.index = 0
+	
+	def __len__(self):
+		return len(self.tokens)
+	
+	def __iter__(self):
+		"""
+		Returns this instance
+		"""
+		return self
+	
+	def append(self, token):
+		"""
+		Appends a token object to this collection
+		"""
+		self.tokens.append(token)
+		return self
+	
+	def next(self):
+		"""
+		Returns current token object
+		"""
+		if self.index >= len(self.tokens):
+			self.index = 0
+			raise StopIteration
+		result = self.tokens[self.index]
+		self.index += 1
+		return result
+	
+	def has(self, environment_name):
+		"""
+		Determines if this has the token
+		"""
+		if self.find(environment_name) is False:
+			return False
+		else:
+			return True
+	
+	def find(self, environment_name):
+		"""
+		Returns token object
+		"""
+		for token in self.tokens:
+			if token.get_environment_name() == environment_name:
+				return token
+		return False
+
+
+class Token:
+	"""
+	Token file object
+	"""
+	def __init__(self, filename):
+		"""
+		Returns new Token object
+		"""
+		if self._isValidFilename(filename) is False:
+			raise Exception("Token file name is not valid: %s" % filename)
+		self.filename = filename
+		self.original_filename = filename
+	
+	def get_filename(self):
+		"""
+		Returns file name
+		"""
+		return self.filename
+	
+	def get_original_filename(self):
+		"""
+		Returns original file name
+		"""
+		return self.original_filename
+	
+	def get_datetime(self):
+		"""
+		Returns datetime
+		"""
+		return self.filename.split('~')[0].replace('_', '')
+	
+	def get_environment_name(self):
+		"""
+		Returns environment name
+		"""
+		return self.filename.split('~')[1].split('.')[0]
+	
+	def log(self, message):
+		"""
+		Logs message
+		"""
+		now = time.strftime('%Y-%m-%d %H:%M:%S')
+		file = open(self.filename, 'a')
+		file.write("-- [%s] %s\n" % (now, message))
+	
+	def update_time(self):
+		"""
+		Updates time
+		"""
+		info = self.filename.split('~')
+		info[0] = time.strftime('%Y%m%d_%H%M')
+		new_filename = '~'.join(info)
+		self._rename(new_filename)
+
+	@staticmethod
+	def _isValidFilename(filename):
+		"""
+		Determines if the file name is valid
+		"""
+		if re.match(r'^[0-9]{8}_[0-9]{4}~.+\.apply_token$', filename):
+			return True
+		else:
+			return False
+	
+	def _rename(self, new):
+		"""
+		Renames filename
+		"""
+		old = self.filename
+		os.rename(old, new)
+		self.original_filename = old
+		self.filename = new
+
 def init(args):
+	"""
+	Initialize with new token
+	"""
 	if args.name is None:
 		args.name = get_new_file_name("Environment name")
 
-	if environment_exists(args.name):
+	tokens = get_all_tokens()
+
+	if tokens.has(args.name):
 		print "Environment '%s' already exists." % (args.name)
 		print "Please try other name."
 		exit(1)
@@ -32,14 +164,15 @@ def init(args):
 		exit(1)
 	
 	file = open(filename, 'w')
-	file.write('-- apply token for "%s"' % (args.name))
+	file.write("-- [%s] update-query create '%s'\n" % (time.strftime('%Y-%m-%d %H:%M:%S'), args.name))
 	file.close()
 	print "New token '%s' was created." % (filename)
 
-"""
-Create new file
-"""
+
 def create(args):
+	"""
+	Create new file
+	"""
 	if args.name is None:
 		args.name = get_new_file_name("New file name")
 	
@@ -56,17 +189,18 @@ def create(args):
 	print "New file '%s' was created." % (filename)
 	print "Please edit it."
 
-"""
-List up all tokens
-"""
 def tokens(args):
-	for token in glob.glob('*.apply_token'):
-		print "  " + token
+	"""
+	List up all tokens
+	"""
+	tokens = get_all_tokens()
+	for token in tokens:
+		print "  " + token.get_filename()
 
-"""
-fetch new file name via interactive
-"""
 def get_new_file_name(question, error_message = None):
+	"""
+	fetch new file name via interactive
+	"""
 
 	if error_message:
 		message = "%s (%s): " % (question, error_message)
@@ -84,14 +218,13 @@ def get_new_file_name(question, error_message = None):
 
 	return new_file_name
 
-"""
-Concatenate all update queries together
-"""
 def apply(args):
-
-	environments = get_all_environment_names()
+	"""
+	Concatenate all update queries together
+	"""
+	tokens = get_all_tokens()
 	
-	if len(environments) < 1:
+	if len(tokens) < 1:
 		print "Sorry, there is no environments."
 		print ""
 		print "If you use this first, initialize environment tokens:"
@@ -100,15 +233,15 @@ def apply(args):
 	
 	if args.name is None:
 		print "We know these environments:"
-		for name in environments:
-			print "  * " + name
+		for token in tokens:
+			print "  * " + token.get_environment_name()
 		args.name = fetch_environment_name()
 	
-	if environment_exists(args.name) is False:
+	if tokens.has(args.name) is False:
 		print "Sorry, such an environment not found: %s" % (args.name)
 		exit(1)
 	
-	environment_last_apply = get_environment_last_apply_datetime(args.name)
+	selected_token = tokens.find(args.name)
 	
 	candidates = glob.glob('*.sql')
 	candidates.sort()
@@ -119,7 +252,7 @@ def apply(args):
 	for candidate in candidates:
 		candiadte_datetime = ''.join(candidate.split('_', 2)[0:2])
 		
-		if candiadte_datetime > environment_last_apply:
+		if candiadte_datetime > selected_token.get_datetime():
 			apply_query_files.append(candidate)
 	
 	if len(apply_query_files) < 1:
@@ -136,12 +269,19 @@ def apply(args):
 
 	patch_contents = "\n\n".join(contents)
 	patch_filename = 'patch.%s.%s.sql' % (args.name, time.strftime('%Y%m%d_%H%M'))
-	
+
 	if os.path.exists(patch_filename):
 		print "Patch file already exists: %s" % (patch_filename)
 		exit(1)
 
-	reflesh_token(args.name)
+	for filename in apply_query_files:
+		selected_token.log('update-query cat "%s" >> "%s"' % (filename, patch_filename))
+
+	selected_token.update_time()
+	original_filename = selected_token.get_original_filename()
+	new_filename = selected_token.get_filename()
+	selected_token.log('update-query mv %s %s' % (original_filename, new_filename))
+	print "Token renamed %s -> %s" % (original_filename, new_filename)
 	
 	file = open(patch_filename, 'w')
 	file.write(patch_contents)
@@ -154,35 +294,21 @@ def apply(args):
 	print ""
 	print "Please apply the patch update queries in above file to the SQL server."
 	print "After you apply, please delete patch file from here."
-	
 
-"""
-Determine if environment name exists
-"""
-def environment_exists(name):
-	return name in get_all_environment_names()
 
-"""
-Return known environment names
-"""
-def get_all_environment_names():
-	environment_names = []
+def get_all_tokens():
+	"""
+	Returns all tokens
+	"""
+	tokens = TokenCollection()
 	for name in glob.glob('*.apply_token'):
-		environment_name = name.split('~')[1].split('.apply_token')[0]
-		environment_names.append(environment_name)
-	return environment_names
+		tokens.append(Token(name))
+	return tokens
 
-def get_environment_last_apply_datetime(name):
-	for filename in glob.glob('*.apply_token'):
-		environment_name = filename.split('~')[1].split('.apply_token')[0]
-		if environment_name == name:
-			return filename.split('~')[0].replace('_', '')
-	return False
-
-"""
-Fetch environment name via interactive
-"""
 def fetch_environment_name():
+	"""
+	Fetch environment name via interactive
+	"""
 	environment_name = raw_input("Environment name: ")
 	
 	if environment_name == '':
@@ -190,24 +316,10 @@ def fetch_environment_name():
 	
 	return environment_name
 
-"""
-
-"""
-def reflesh_token(name):
-	for filename in glob.glob('*.apply_token'):
-		environment_name = filename.split('~')[1].split('.apply_token')[0]
-		if environment_name == name:
-			info = filename.split('~')
-			info[0] = time.strftime('%Y%m%d_%H%M')
-			new_filename = '~'.join(info)
-			os.rename(filename, new_filename)
-			print "Token renamed %s -> %s" % (filename, new_filename)
-	return False
-
-"""
-Main
-"""
 def main():
+	"""
+	Main
+	"""
 	parser = argparse.ArgumentParser(description='Update query management tool')
 
 	subparsers = parser.add_subparsers(title='commands', metavar='command')
